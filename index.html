@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Versatile Char Count & Ruler Tool</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --fg: #e0e0e0;
+      --panel-bg: rgba(255,255,255,0.05);
+      --panel-border: rgba(255,255,255,0.15);
+      --accent: #6200ee;
+      --accent-hover: #3700b3;
+      --warning: #ff6b6b;
+    }
+    * { box-sizing: border-box; margin:0; padding:0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: monospace;
+      overflow: hidden;
+    }
+    #bg-canvas {
+      position: fixed; top:0; left:0;
+      width:100%; height:100%;
+      z-index:0;
+      display:block;
+    }
+    .container {
+      position: relative;
+      z-index:1;
+      max-width:600px;
+      margin:2rem auto;
+      display: flex;
+      flex-direction: column;
+      gap:2rem;
+    }
+    .panel {
+      backdrop-filter: blur(12px);
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 1rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap:1rem;
+    }
+    h1, h2 { color: var(--fg); text-align:center; }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap:1rem;
+      align-items: center;
+    }
+    label { display:flex; flex-direction:column; font-size:0.9rem; }
+    input[type=number], input[type=text], textarea {
+      font-family: monospace;
+      font-size:0.9rem;
+      padding:0.5rem;
+      border-radius:0.5rem;
+      border:1px solid var(--panel-border);
+      background: rgba(255,255,255,0.05);
+      color: var(--fg);
+    }
+    textarea { resize: vertical; min-height:120px; }
+    .button {
+      padding:0.6rem 1.2rem;
+      background: var(--accent);
+      color:#fff;
+      border:none;
+      border-radius:0.5rem;
+      cursor:pointer;
+      transition: background 0.2s;
+      font-size:0.9rem;
+    }
+    .button:hover { background: var(--accent-hover); }
+    #analysis { font-size:0.9rem; }
+    .warning { color: var(--warning); }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+  <div class="container">
+    <h1>Char Count & Ruler Tool</h1>
+    <div class="panel">
+      <h2>Settings</h2>
+      <div class="controls">
+        <label>Max Limit:<input id="maxLimitInput" type="number" min="1" /></label>
+        <label>Symbol:<input id="symbolInput" type="text" maxlength="1" /></label>
+        <label>Marker:<input id="markerInput" type="text" maxlength="1" /></label>
+        <label><input id="showCount" type="checkbox" /> Show Count</label>
+        <button id="saveBtn" class="button">Save</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Analyze Text</h2>
+      <textarea id="textInput" placeholder="Paste text here..."></textarea>
+      <div id="analysis">Used: 0 | Remaining: 0</div>
+      <button id="rulerFromTextBtn" class="button">Generate Ruler</button>
+      <div id="rulerFromText"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Generate Ruler</h2>
+      <div class="controls">
+        <label>Length:<input id="charInput" type="number" min="1" /></label>
+        <button id="genBtn" class="button">Generate</button>
+      </div>
+      <div id="output"></div>
+    </div>
+  </div>
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+
+    // **Background WebGL Morphing Wireframe**
+    const canvas = document.getElementById('bg-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 50;
+    const geo = new THREE.PlaneGeometry(60, 60, 60, 60);
+    const mat = new THREE.MeshBasicMaterial({ wireframe: true, opacity: 0.6, transparent: true, color: 0x00ffff });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2.5;
+    scene.add(mesh);
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    });
+    let time = 0;
+    function animate() {
+      requestAnimationFrame(animate);
+      time += 0.01;
+      const positions = geo.attributes.position.array;
+      const vertexCount = geo.attributes.position.count;
+      for (let i = 0; i < vertexCount; i++) {
+        const x = positions[i * 3];
+        const y = positions[i * 3 + 1];
+        const d = Math.sqrt(x * x + y * y);
+        positions[i * 3 + 2] = Math.sin(d / 2 - time) * 2;
+      }
+      geo.attributes.position.needsUpdate = true;
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // **Core Tool Functionality**
+    const defaultSettings = {
+      max: 8000,
+      sym: '|',
+      marker: '^',
+      showCount: true
+    };
+
+    // DOM elements
+    const maxInput = document.getElementById('maxLimitInput');
+    const symbolInput = document.getElementById('symbolInput');
+    const markerInput = document.getElementById('markerInput');
+    const showCountBox = document.getElementById('showCount');
+    const saveBtn = document.getElementById('saveBtn');
+    const textInput = document.getElementById('textInput');
+    const analysis = document.getElementById('analysis');
+    const rulerBtn = document.getElementById('rulerFromTextBtn');
+    const rulerOut = document.getElementById('rulerFromText');
+    const charInput = document.getElementById('charInput');
+    const genBtn = document.getElementById('genBtn');
+    const output = document.getElementById('output');
+
+    // Load saved settings
+    function loadSettings() {
+      const s = JSON.parse(localStorage.getItem('ccrSettings') || '{}');
+      maxInput.value = s.max || defaultSettings.max;
+      symbolInput.value = s.sym || defaultSettings.sym;
+      markerInput.value = s.marker || defaultSettings.marker;
+      showCountBox.checked = s.showCount !== undefined ? s.showCount : defaultSettings.showCount;
+      updateAnalysis();
+    }
+
+    // Save settings with validation
+    function saveSettings() {
+      const max = parseInt(maxInput.value) || defaultSettings.max;
+      const sym = symbolInput.value || defaultSettings.sym;
+      const marker = markerInput.value || defaultSettings.marker;
+      const showCount = showCountBox.checked;
+
+      if (max < 1) {
+        alert('Max Limit must be at least 1.');
+        return;
+      }
+      if (sym.length !== 1 || marker.length !== 1) {
+        alert('Symbol and Marker must be single characters.');
+        return;
+      }
+
+      const settings = { max, sym, marker, showCount };
+      localStorage.setItem('ccrSettings', JSON.stringify(settings));
+      updateAnalysis();
+    }
+    saveBtn.addEventListener('click', saveSettings);
+
+    // Update character count analysis
+    function updateAnalysis() {
+      const max = parseInt(maxInput.value) || defaultSettings.max;
+      const len = textInput.value.length;
+      const rem = max - len;
+      analysis.textContent = `Used: ${len} | Remaining: ${rem}`;
+      analysis.className = rem < 0 ? 'warning' : '';
+    }
+    textInput.addEventListener('input', updateAnalysis);
+
+    // Generate ruler
+    function makeRuler(length) {
+      const sym = symbolInput.value || defaultSettings.sym;
+      const mark = markerInput.value || defaultSettings.marker;
+      const total = parseInt(length) || 0;
+      const markerLength = mark.length;
+
+      if (total < markerLength) return null;
+
+      const remaining = total - markerLength;
+      const sideLength = Math.floor(remaining / 2);
+      const leftSide = sym.repeat(sideLength);
+      const rightSide = sym.repeat(sideLength);
+      const center = remaining % 2 === 1 ? sym + mark + sym : mark;
+      let ruler = leftSide + center + rightSide;
+
+      if (showCountBox.checked) ruler += ` (len=${total})`;
+      return ruler;
+    }
+
+    // Ruler from text input
+    rulerBtn.addEventListener('click', () => {
+      const len = textInput.value.length;
+      const ruler = makeRuler(len);
+      rulerOut.innerHTML = '';
+      if (!ruler) {
+        rulerOut.innerHTML = `<div class='warning'>Length must be at least the marker's length.</div>`;
+      } else {
+        const pre = document.createElement('pre');
+        pre.textContent = ruler;
+        const btn = document.createElement('button');
+        btn.textContent = 'Copy';
+        btn.className = 'button';
+        btn.onclick = () => { navigator.clipboard.writeText(ruler); };
+        rulerOut.append(pre, btn);
+      }
+    });
+
+    // Ruler from custom length
+    genBtn.addEventListener('click', () => {
+      const len = parseInt(charInput.value);
+      if (isNaN(len) || len < 1) {
+        output.innerHTML = `<div class='warning'>Length must be at least 1.</div>`;
+        return;
+      }
+      const ruler = makeRuler(len);
+      output.innerHTML = '';
+      if (!ruler) {
+        output.innerHTML = `<div class='warning'>Length must be at least the marker's length.</div>`;
+      } else {
+        const pre = document.createElement('pre');
+        pre.textContent = ruler;
+        const btn = document.createElement('button');
+        btn.textContent = 'Copy';
+        btn.className = 'button';
+        btn.onclick = () => { navigator.clipboard.writeText(ruler); };
+        output.append(pre, btn);
+      }
+    });
+
+    // Initialize
+    loadSettings();
+  </script>
+</body>
+</html>
